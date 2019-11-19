@@ -45,7 +45,7 @@ def transpose_convolve(input, filter, stride, bias):
 	f_w, f_h = filter.shape
 	output = np.zeros((stride*(in_w-1) + f_w, stride*(in_h-1) + f_h))
 	assert(in_w == in_h) #For now, input matrix must be square
-	d_aug = 2*in_w + 2*f_w - 3
+	d_aug = in_w + (stride-1)*(in_w-1) + 2*f_w - 2
 	input_aug = np.zeros((d_aug, d_aug))
 	p = f_h-1
 	for a in range(0, in_w):
@@ -54,12 +54,15 @@ def transpose_convolve(input, filter, stride, bias):
 			input_aug[a + p][b + q] = input[a][b]
 			q += 1
 		p += 1
-	return convolve(input_aug, filter, 1, np.zeros((stride*(in_w-1) + f_w, stride*(in_h-1) + f_h)))
+	return convolve(input_aug, filter, 1, bias)
+	#C = convolution_matrix(in_w, stride*(in_w-1) + f_w, filter, stride, transpose=True)
+	#return C.dot(input.reshape((-1, 1))).reshape((out_w, out_w))
 	
 def convolve(input, filter, stride, bias):
 	in_w, in_h = input.shape
 	f_w, f_h = filter.shape
-	output = np.zeros(((in_w - f_w)//stride + 1, (in_h - f_h)//stride + 1), dtype='uint8')
+	out_w = (in_w - f_w)//stride + 1	
+	output = np.zeros(((in_w - f_w)//stride + 1, (in_h - f_h)//stride + 1))
 	a = 0
 	i = 0
 	while (i <= in_w - f_w):
@@ -70,23 +73,63 @@ def convolve(input, filter, stride, bias):
 			for p in range(0, f_w):
 				for q in range(0, f_h):
 					sum += input[i + p][j + q]*filter[p][q]
-			output[a][b] = int(sum + bias[a][b])
+			output[a][b] = sum + bias[a][b]
 			b += 1
 			j += stride
 		a += 1
 		i += stride
+	#C = convolution_matrix(in_w, int((in_w - f_w)/stride)+1, filter, stride)
+	#return C.dot(input.reshape((-1, 1))).reshape((out_w, out_w))
 	return output
 
 def view(image):
 	pyplot.imshow(image, pyplot.cm.gray)
 	pyplot.show()
 
-image = read_pgm('lfwcrop_grey/faces/Aaron_Eckhart_0001.pgm')
-for i in range(0, 4):
-	output = convolve(image, np.ones((4, 4),dtype='uint8'), 2, np.zeros(image.shape))
-	image = output
+def example():
+	image = read_pgm('lfwcrop_grey/faces/Aaron_Eckhart_0001.pgm')
 	print(image.shape)
-for j in range(0, 4):
-	output = transpose_convolve(image, np.ones((4, 4), dtype='uint8'), 2, None)
-	image = output
-	print(image.shape)
+	for i in range(0, 4):
+		image = convolve(image, np.ones((4, 4)), 2, np.zeros(image.shape))
+		print(image.shape)
+	for j in range(0, 4):
+		in_w, in_h = image.shape
+		bias = np.zeros((2*(in_w-1) + 4, 2*(in_h-1) + 4)) #stride*(input_dim-1) + kernel_dim
+		image = transpose_convolve(image, np.ones((4, 4)), 2, bias)	
+		print(image.shape)
+
+def explore():
+	image = read_pgm('lfwcrop_grey/faces/Aaron_Eckhart_0001.pgm')
+	filter = np.array([[1,2,3,4],[5,6,7,8],[9,10,11,12]])
+	convolutions = []
+	inputs = []
+	outputs = []
+	for a in range(0, 4):
+		in_w, in_h = image.shape
+		output = convolve(image, filter, 2, np.zeros(image.shape))
+		out_w, out_h = output.shape
+		i = image.reshape((in_w*in_h, 1))
+		o = output.reshape((out_w*out_h, 1))
+		convolutions.append(getC(i,o))
+		inputs.append(i)
+		outputs.append(o)
+	return convolutions, inputs, outputs
+
+def convolution_matrix(i_dim, o_dim, filter, stride, transpose=False):
+	C = np.zeros((i_dim**2, o_dim**2)) if transpose else np.zeros((o_dim**2, i_dim**2))
+	pad = 0
+	count = 0
+	for i in range(0, o_dim**2):
+		offset = 0
+		for a in range(0, len(filter)):
+			for b in range(0, len(filter)):
+				C[i][b + pad + offset] = filter[a][b]
+			offset += i_dim		
+		count+=1
+		pad += stride
+		if (count == o_dim):
+			pad += len(filter) + i_dim - stride
+			count = 0
+	if (transpose):
+		C = C.T
+	return C
