@@ -1,6 +1,8 @@
 import numpy as np
 import re
 from matplotlib import pyplot
+import cv2
+import random
 
 def read_pgm(filename, byteorder='>'):
 	with open(filename, 'rb') as f:
@@ -23,7 +25,8 @@ def read_pgm(filename, byteorder='>'):
 	return image.reshape((64, 64))
 
 def batchnorm(X, beta=0, gamma=1):
-	average = np.zeros((64, 64))
+	w,h = X[0].shape
+	average = np.zeros((w, h))
 	for x in X:
 		average += x
 	average/=len(X)
@@ -37,10 +40,22 @@ def batchnorm(X, beta=0, gamma=1):
 		Y.append(gamma*norm_x + beta)
 	return Y
 
-def relu(x):
-	return max(0, x)
+def standard_activation(x):
+    return x
 
-def transpose_convolve(input, filter, stride, bias):
+def leaky_relu(x):
+    if (x > 0):
+        return x
+    else:
+        return 0.01*x
+
+def relu(x):
+	if (x > 0):
+		return x
+	else:
+		return 0
+
+def transpose_convolve(input, filter, stride, bias, activation):
 	in_w, in_h = input.shape
 	f_w, f_h = filter.shape
 	output = np.zeros((stride*(in_w-1) + f_w, stride*(in_h-1) + f_h))
@@ -54,11 +69,11 @@ def transpose_convolve(input, filter, stride, bias):
 			input_aug[a + p][b + q] = input[a][b]
 			q += 1
 		p += 1
-	return convolve(input_aug, filter, 1, bias)
+	return convolve(input_aug, filter, 1, bias, activation)
 	#C = convolution_matrix(in_w, stride*(in_w-1) + f_w, filter, stride, transpose=True)
 	#return C.dot(input.reshape((-1, 1))).reshape((out_w, out_w))
 	
-def convolve(input, filter, stride, bias):
+def convolve(input, filter, stride, bias, activation):
 	in_w, in_h = input.shape
 	f_w, f_h = filter.shape
 	out_w = (in_w - f_w)//stride + 1	
@@ -69,11 +84,11 @@ def convolve(input, filter, stride, bias):
 		j = 0
 		b = 0
 		while (j <= in_h - f_h):
-			sum = 0
+			sum = bias
 			for p in range(0, f_w):
 				for q in range(0, f_h):
 					sum += input[i + p][j + q]*filter[p][q]
-			output[a][b] = sum + bias[a][b]
+			output[a][b] = activation(sum)
 			b += 1
 			j += stride
 		a += 1
@@ -82,6 +97,25 @@ def convolve(input, filter, stride, bias):
 	#return C.dot(input.reshape((-1, 1))).reshape((out_w, out_w))
 	return output
 
+def convolve2(input, kernel, s, bias, activation):
+	k_w, k_h = kernel.shape
+	i_w, i_h = input.shape
+	assert(i_w == i_h and k_w == k_h) #For now, only square inputs and convolutions
+	d = (i_w - k_w)//s + 1
+	out = np.zeros((d, d))
+	for i in range(0, d):
+		for j in range(0, d):
+			sum = bias
+			for k in range(0, k_w):
+				for l in range(0, k_h):
+					sum += kernel[k][l]*input[2*i+k][2*j+l]
+			out[i][j] = activation(sum)
+	return out
+	
+
+def resize(image):
+    return cv2.resize(image, dsize=(64, 64), interpolation=cv2.INTER_CUBIC)
+    
 def view(image):
 	pyplot.imshow(image, pyplot.cm.gray)
 	pyplot.show()
@@ -115,6 +149,7 @@ def explore():
 		outputs.append(o)
 	return convolutions, inputs, outputs
 
+#Optimization for convolutional layers. Fails for deconvolutional
 def convolution_matrix(i_dim, o_dim, filter, stride, transpose=False):
 	C = np.zeros((i_dim**2, o_dim**2)) if transpose else np.zeros((o_dim**2, i_dim**2))
 	pad = 0
@@ -133,3 +168,83 @@ def convolution_matrix(i_dim, o_dim, filter, stride, transpose=False):
 	if (transpose):
 		C = C.T
 	return C
+
+#Generator
+layers = []
+#Convolutional
+layers.append({'func': convolve, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'activation': standard_activation, 'dropout': 0, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+layers.append({'func': convolve, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'batchnorm': [random.uniform(0,1), random.uniform(0,1)], 'activation': leaky_relu, 'dropout': 0, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+layers.append({'func': convolve, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'batchnorm': [random.uniform(0,1), random.uniform(0,1)], 'activation': leaky_relu, 'dropout': 0, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+layers.append({'func': convolve, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'activation': leaky_relu, 'dropout': 0, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+#Deconvolutional
+layers.append({'func': transpose_convolve, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'batchnorm': [random.uniform(0,1), random.uniform(0,1)], 'activation': relu, 'dropout':random.randint(0,1), 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+layers.append({'func': transpose_convolve, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'batchnorm': [random.uniform(0,1), random.uniform(0,1)], 'activation': relu, 'dropout':random.randint(0,1), 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+layers.append({'func': transpose_convolve, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'batchnorm': [random.uniform(0,1), random.uniform(0,1)], 'activation': relu, 'dropout': 0, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+layers.append({'func': transpose_convolve, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'activation': relu, 'dropout': 0, 'partial_b': 0})
+
+#Hyperparameters
+lambda1 = 0.5
+lambda2 = 0.5
+def generator_pass(x, skip=0):
+	input = x
+	for i in range(skip, len(layers)):
+		layer = layers[i]
+		if (layer['dropout'] == 0):
+			output = layer['func'](input, layer['kernel'], 2, layer['bias'], layer['activation'])
+			#Need to figure out how to incorporate batchnorm
+			if (i == 1 or i == 2):
+				generator_pass(output, skip=i+3)
+			input = output
+		else:
+			layer['dropout'] = random.randint(0,1)
+		if (i == len(layers)-1):
+			print(output)
+    #Error evaluation and backpropogation
+
+#Discriminator
+discrim = []
+discrim.append({'func': convolve, 'stride': 2, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'activation': standard_activation, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+discrim.append({'func': convolve, 'stride': 2, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'batchnorm': [random.uniform(0,1), random.uniform(0,1)], 'activation': leaky_relu, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+discrim.append({'func': convolve, 'stride': 1, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'batchnorm': [random.uniform(0,1), random.uniform(0,1)], 'activation': leaky_relu, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+discrim.append({'func': convolve, 'stride': 1, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'activation': leaky_relu, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+
+def discriminator_pass(x):
+	input = x
+	for layer in discrim:
+		output = layer['func'](input, layer['kernel'], layer['stride'], layer['bias'], layer['activation'])
+		input = output
+	return input
+	
+#PLACEHOLDER! Actual loss is a function of the discriminator and generator
+#This simply calculates distance from the average face of the dataset
+def loss(x):
+	avg = average_face(load_dataset)
+	error = 0
+	for i in range(0, 64):
+		for j in range(0, 64):
+			error += (avg[i][j]/255 - x[i][j]/255)**2	
+
+def load_dataset():
+	dataset = []
+	holding = []	
+	files = os.listdir('lfwcrop_grey/faces')
+	for file in files:
+		dataset.append(read_pgm('lfwcrop_grey/faces/' + file))
+	return dataset
+
+def average_face(dataset):
+	average = np.zeros((64, 64))
+	count = 0
+	for face in dataset:
+		if (count == 0):
+			average += face
+		else:
+			average = (average + face/count)*(count/(count+1))
+	return average
+
+
+def simulate_convolvements():
+	X = [['x'+str(i) + '_' + str(j) for j in range(0, 64)] for i in range(0, 64)]
+	kernel = [['k' + str(k) + '_' + str(l) for l in range(0, 4)] for k in range(0, 4)]
+	
+	
