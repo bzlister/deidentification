@@ -1,11 +1,12 @@
 from keras import layers
 from keras import models
-from keras.layers import Activation, BatchNormalization, Dropout, Reshape, Lambda
-from keras.layers import LeakyReLU
+from keras.models import Model
+from keras.layers import Activation, BatchNormalization, Dropout, Reshape, Lambda, LeakyReLU, Input
 import cv2
 import numpy as np
 from keras.backend import tf as ktf
 import random
+from keras.layers.merge import concatenate
 
 def read_pgm(filename, byteorder='>'):
 	with open(filename, 'rb') as f:
@@ -37,39 +38,63 @@ def load_dataset():
 	files = os.listdir('lfwcrop_grey/faces')
 	for file in files:
 		dataset.append(read_pgm('lfwcrop_grey/faces/' + file)/255)
-	return dataset	
+	return dataset
+
+def average_face(dataset):
+	average = np.zeros((64, 64))
+	count = 0
+	for face in dataset:
+		if (count == 0):
+			average += face
+		else:
+			average = (average + face/count)*(count/(count+1))
+	return average
+
+#PLACEHOLDER! Actual loss is a function of the discriminator and generator
+#This simply calculates distance from the average face of the dataset
+def avg_loss(truth, x):
+	avg = average_face(load_dataset)
+	error = 0
+	for i in range(0, 64):
+		for j in range(0, 64):
+			error += (avg[i][j]/255 - x[i][j]/255)**2	
 
 def buildGenerator():
-	model = models.Sequential()
-	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(64, 64, 1)))
+	inputs = Input((64, 64, 1))
+	input_layer = layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(64, 64, 1))(inputs)
 
-	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(31, 31, 1)))
-	model.add(layers.BatchNormalization())
-	model.add(LeakyReLU(alpha=0.01))
+	c1 = layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(31, 31, 1))(input_layer)
+	c1 = layers.BatchNormalization()(c1)
+	c1 = LeakyReLU(alpha=0.01)(c1)
 
-	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(14, 14, 1)))
-	model.add(layers.BatchNormalization())
-	model.add(LeakyReLU(alpha=0.01))
+	c2 = layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(14, 14, 1))(c1)
+	c2 = layers.BatchNormalization()(c2)
+	c2 = LeakyReLU(alpha=0.01)(c2)
 
-	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(6, 6, 1)))
-	model.add(LeakyReLU(alpha=0.01))
+	c3 = layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(6, 6, 1))(c2)
+	c3 = LeakyReLU(alpha=0.01)(c3)
 
-	model.add(layers.Conv2DTranspose(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(2, 2, 1)))
-	model.add(layers.BatchNormalization())
-	model.add(layers.Dropout(0.5))
-	model.add(Activation('relu'))
+	d1 = layers.Conv2DTranspose(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(2, 2, 1))(c3)
+	d1 = layers.BatchNormalization()(d1)
+	d1 = layers.Dropout(0.5)(d1)
+	d1 = Activation('relu')(d1)
+	d1 = concatenate([d1, c2])
 
-	model.add(layers.Conv2DTranspose(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(6, 6, 1)))
-	model.add(layers.BatchNormalization())
-	model.add(layers.Dropout(0.5))
-	model.add(Activation('relu'))
+	d2 = layers.Conv2DTranspose(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(6, 6, 1))(d1)
+	d2 = layers.BatchNormalization()(d2)
+	d2 = layers.Dropout(0.5)(d2)
+	d2 = Activation('relu')(d2)
+	d2 = concatenate([d2, c1])
+	
+	d3 = layers.Conv2DTranspose(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(14, 14, 1))(d2)
+	d3 = layers.BatchNormalization()(d3)
+	d3 = Activation('relu')(d3)
+	d3 = Lambda(lambda image: ktf.image.resize_images(image, (31,31)), output_shape=(31, 31, 1))(d3)
 
-	model.add(layers.Conv2DTranspose(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(14, 14, 1)))
-	model.add(layers.BatchNormalization())
-	model.add(Activation('relu'))
-	model.add(Lambda(lambda image: ktf.image.resize_images(image, (31,31)), output_shape=(31, 31, 1)))
-
-	model.add(layers.Conv2DTranspose(filters=1, kernel_size=(4,4), strides=2, activation='relu', input_shape=(31, 31, 1)))
+	output_layer = layers.Conv2DTranspose(filters=1, kernel_size=(4,4), strides=2, activation='relu', input_shape=(31, 31, 1))(d3)
+	
+	model = Model(inputs=[inputs], outputs=[output_layer])
+	model.compile(optimizer='adam', loss='binary_crossentropy')
 	return model
 
 def buildDiscriminator():
