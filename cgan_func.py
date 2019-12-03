@@ -3,6 +3,8 @@ import re
 from matplotlib import pyplot
 import cv2
 import random
+import math
+import os
 
 def read_pgm(filename, byteorder='>'):
 	with open(filename, 'rb') as f:
@@ -185,6 +187,8 @@ layers.append({'func': transpose_convolve, 'kernel': np.random.rand(4,4), 'bias'
 #Hyperparameters
 lambda1 = 0.5
 lambda2 = 0.5
+alpha = 0.000001
+
 def generator_pass(x, skip=0):
 	input = x
 	for i in range(skip, len(layers)):
@@ -202,18 +206,58 @@ def generator_pass(x, skip=0):
     #Error evaluation and backpropogation
 
 #Discriminator
-discrim = []
-discrim.append({'func': convolve, 'stride': 2, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'activation': standard_activation, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
-discrim.append({'func': convolve, 'stride': 2, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'batchnorm': [random.uniform(0,1), random.uniform(0,1)], 'activation': leaky_relu, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
-discrim.append({'func': convolve, 'stride': 1, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'batchnorm': [random.uniform(0,1), random.uniform(0,1)], 'activation': leaky_relu, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
-discrim.append({'func': convolve, 'stride': 1, 'kernel': np.random.rand(4,4), 'bias': random.uniform(0,1), 'activation': leaky_relu, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+def discriminator():
+	discrim = []
+	discrim.append({'func': convolve, 'stride': 2, 'kernel': 2*np.random.rand(4,4)-1, 'bias': random.uniform(-1,1), 'activation': standard_activation, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+	discrim.append({'func': convolve, 'stride': 2, 'kernel': 2*np.random.rand(4,4)-1, 'bias': random.uniform(-1,1), 'batchnorm': [random.uniform(0,1), random.uniform(0,1)], 'activation': leaky_relu, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+	discrim.append({'func': convolve, 'stride': 1, 'kernel': 2*np.random.rand(4,4)-1, 'bias': random.uniform(-1,1), 'batchnorm': [random.uniform(0,1), random.uniform(0,1)], 'activation': leaky_relu, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+	discrim.append({'func': convolve, 'stride': 1, 'kernel': 2*np.random.rand(4,4)-1, 'bias': random.uniform(-1,1), 'activation': leaky_relu, 'partials_w': np.zeros((4,4)), 'partial_b': 0})
+	X = load_dataset()
+	for x in X[:10]:
+		out = discriminator_pass(x, 1, discrim)
+		out2 = discriminator_pass(255*np.random.rand(64,64), 0, discrim)
+		print(out, out2)
+	return discrim
 
-def discriminator_pass(x):
+def discriminator_pass(x, real, discrim):
 	input = x
-	for layer in discrim:
-		output = layer['func'](input, layer['kernel'], layer['stride'], layer['bias'], layer['activation'])
+	for l in range(0, len(discrim)):
+		discrim[l]['input'] = input
+		output = discrim[l]['func'](input, discrim[l]['kernel'], discrim[l]['stride'], discrim[l]['bias'], discrim[l]['activation'])
 		input = output
-	return input
+	output = [[1/(1+math.exp(-1*element)) for element in row] for row in output]
+	#Backpropagation
+	upper_partials = [[patch-real for patch in row] for row in output]
+	print(upper_partials)
+	l = len(discrim)-1
+	while (l >= 0):
+		mat = discrim[l]['input']
+		kern = discrim[l]['kernel']
+		partials = discrim[l]['partials_w']
+		s = discrim[l]['stride']
+		for i in range(0, len(upper_partials)):
+			for j in range(0, len(upper_partials)):
+				kernel_sum = 0
+				for r in range(0, len(kern)):
+					for c in range(0, len(kern)):
+						kernel_sum += kern[r][c]*mat[s*i+r][s*j+c]
+				for p in range(0, len(kern)):
+					for q in range(0, len(kern)):
+						partials[p][q] += upper_partials[i][j]*mat[s*i+p][s*j+q]*kernel_sum
+		upper_partials = partials
+		print('Layer %d' %(l))
+		print(upper_partials)
+		discrim[l]['partials_w'] = partials
+		for a in range(0, len(kern)):
+			for b in range(0, len(kern)):
+				kern[a][b] -= alpha*partials[a][b]
+		discrim[l]['kernel'] = kern
+		l-=1
+	votes = 0
+	for i in range(0, len(output)):
+		for j in range(0, len(output[j])):
+			votes += output[i][j]
+	return votes/64
 	
 #PLACEHOLDER! Actual loss is a function of the discriminator and generator
 #This simply calculates distance from the average face of the dataset
