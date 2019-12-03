@@ -10,6 +10,7 @@ from keras.optimizers import Adam
 import os
 import re
 from keras.layers.merge import concatenate
+from matplotlib import pyplot
 
 def read_pgm(filename, byteorder='>'):
 	with open(filename, 'rb') as f:
