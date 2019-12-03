@@ -1,11 +1,12 @@
 from keras import layers
 from keras import models
 from keras.models import Model
-from keras.layers import Activation, BatchNormalization, Dropout, Reshape, Lambda, LeakyReLU, Input
+from keras.layers import Activation, BatchNormalization, Dropout, Reshape, Lambda, LeakyReLU, Input, Concatenate
 import cv2
 import numpy as np
 from keras.backend import tf as ktf
 import random
+from keras.optimizers import Adam
 from keras.layers.merge import concatenate
 
 def read_pgm(filename, byteorder='>'):
@@ -91,29 +92,53 @@ def buildGenerator():
 	d3 = Activation('relu')(d3)
 	d3 = Lambda(lambda image: ktf.image.resize_images(image, (31,31)), output_shape=(31, 31, 1))(d3)
 
-	output_layer = layers.Conv2DTranspose(filters=1, kernel_size=(4,4), strides=2, activation='relu', input_shape=(31, 31, 1))(d3)
-	
-	model = Model(inputs=[inputs], outputs=[output_layer])
-	model.compile(optimizer='adam', loss='binary_crossentropy')
+	output_layer = layers.Conv2DTranspose(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(31, 31, 1))(d3)
+	outputs = Activation('relu')(output_layer)
+	model = Model(inputs=[inputs], outputs=[outputs])
 	return model
 
 def buildDiscriminator():
-	model = models.Sequential()
-	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(64,64,1)))
+	input_src = Input(shape=(64,64,1))
+	input_target = Input(shape=(64,64,1))
+	merged = Concatenate()([input_src, input_target])
+	layer1 = layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(64,64,1))(merged)
 	
-	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(31,31,1)))
-	model.add(layers.BatchNormalization())
-	model.add(LeakyReLU(alpha=0.01))
+	layer2 = layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(31,31,1))(layer1)
+	layer2 = layers.BatchNormalization()(layer2)
+	layer2 = LeakyReLU(alpha=0.01)(layer2)
 	
-	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=1, activation=None, input_shape=(14,14,1)))
-	model.add(layers.BatchNormalization())
-	model.add(LeakyReLU(alpha=0.01))
+	layer3 = layers.Conv2D(filters=1, kernel_size=(4,4), strides=1, activation=None, input_shape=(14,14,1))(layer2)
+	layer3 = layers.BatchNormalization()(layer3)
+	layer3 = LeakyReLU(alpha=0.01)(layer3)
 	
-	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=1, activation=None, input_shape=(11,11,1)))
-	model.add(LeakyReLU(alpha=0.01))
-
-	model.add(Lambda(lambda image: 1/(1+np.exp(-image)), output_shape=(8,8,1)))
+	layer4 = layers.Conv2D(filters=1, kernel_size=(4,4), strides=1, activation=None, input_shape=(11,11,1))(layer3)
+	layer4 = LeakyReLU(alpha=0.01)(layer4)
+	
+	out = Activation('sigmoid')(layer4)
+	
+	opt = Adam(lr=0.0002, beta_1=0.5)
+	model = Model([input_src, input_target], out)
+	model.compile(loss='binary_crossentropy', optimizer=opt, loss_weights=[0.5])
 	return model
 
-model = buildGenerator()
-print(model.summary())
+def buildGan():
+	g_model = buildGenerator()
+	d_model = buildDiscriminator()
+	image_shape =  (64,64,1)
+	# make weights in the discriminator not trainable
+	d_model.trainable = False
+	# define the source image
+	in_src = Input(shape=image_shape)
+	# connect the source image to the generator input
+	gen_out = g_model(in_src)
+	# connect the source input and generator output to the discriminator input
+	dis_out = d_model([in_src, gen_out])
+	# src image as input, generated image and classification output
+	model = Model(in_src, [dis_out, gen_out])
+	# compile model
+	opt = Adam(lr=0.0002, beta_1=0.5)
+	model.compile(loss=['binary_crossentropy', 'mae'], optimizer=opt, loss_weights=[1,100])
+	return model
+
+gan = buildGan()
+print(gan.summary())
