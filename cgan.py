@@ -5,6 +5,7 @@ from keras.layers import LeakyReLU
 import cv2
 import numpy as np
 from keras.backend import tf as ktf
+import random
 
 def read_pgm(filename, byteorder='>'):
 	with open(filename, 'rb') as f:
@@ -36,14 +37,11 @@ def load_dataset():
 	files = os.listdir('lfwcrop_grey/faces')
 	for file in files:
 		dataset.append(read_pgm('lfwcrop_grey/faces/' + file)/255)
-	return dataset
-
-def resize_output(input_shape):
-	return (31, 31)
+	return dataset	
 
 def buildGenerator():
 	model = models.Sequential()
-	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation='relu', input_shape=(64, 64, 1)))
+	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(64, 64, 1)))
 
 	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(31, 31, 1)))
 	model.add(layers.BatchNormalization())
@@ -72,6 +70,24 @@ def buildGenerator():
 	model.add(Lambda(lambda image: ktf.image.resize_images(image, (31,31)), output_shape=(31, 31, 1)))
 
 	model.add(layers.Conv2DTranspose(filters=1, kernel_size=(4,4), strides=2, activation='relu', input_shape=(31, 31, 1)))
+	return model
+
+def buildDiscriminator():
+	model = models.Sequential()
+	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(64,64,1)))
+	
+	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=2, activation=None, input_shape=(31,31,1)))
+	model.add(layers.BatchNormalization())
+	model.add(LeakyReLU(alpha=0.01))
+	
+	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=1, activation=None, input_shape=(14,14,1)))
+	model.add(layers.BatchNormalization())
+	model.add(LeakyReLU(alpha=0.01))
+	
+	model.add(layers.Conv2D(filters=1, kernel_size=(4,4), strides=1, activation=None, input_shape=(11,11,1)))
+	model.add(LeakyReLU(alpha=0.01))
+
+	model.add(Lambda(lambda image: 1/(1+np.exp(-image)), output_shape=(8,8,1)))
 	return model
 
 model = buildGenerator()
