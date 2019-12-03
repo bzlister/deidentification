@@ -29,7 +29,7 @@ def read_pgm(filename, byteorder='>'):
 			offset-=1
 			break
 	image = np.frombuffer(buffer, dtype='u1' if int(maxval) < 256 else byteorder+'u2',count=4096,offset=offset)
-	return image.reshape((64, 64))
+	return image.reshape((1, 64, 64, 1))
 
 def view(image):
 	pyplot.imshow(image, pyplot.cm.gray)
@@ -44,22 +44,30 @@ def load_dataset():
 	return dataset
 
 def generate_real_samples(dataset, n, patch_shape):
-	indices = [0]*n
+	indices_1 = [0]*n
+	indices_2 = [0]*n
 	for i in range(0, n):
-		r = random.randint(0, len(dataset)-1)
-		while (r in indices):
-			r = random.randint(0, len(dataset)-1)
-		indices[i] = r
-	X = []
-	for index in indices:
-		X.append(dataset[index])
+		r1 = random.randint(0, len(dataset)-1)
+		r2 = random.randint(0, len(dataset)-1)
+		while (r1 in indices_1):
+			r1 = random.randint(0, len(dataset)-1)
+		while (r2 in indices_2):
+			r2 = random.randint(0, len(dataset)-1)
+		indices_1[i] = r1
+		indices_2[i] = r2
+	X1 = []
+	X2 = []
+	for index in indices_1:
+		X1.append(dataset[index])
+	for index in indices_2:
+		X2.append(dataset[index])
 	y = np.ones((n, patch_shape, patch_shape, 1))
-	return (X, y)
+	return [X1, X2], y
 
 def generate_fake_samples(g_model, samples, patch_shape):
 	X = g_model.predict(samples)
 	y = np.zeros((len(X), patch_shape, patch_shape, 1))
-	return (X, y)
+	return X, y
 
 def average_face(dataset):
 	average = np.zeros((64, 64))
@@ -141,9 +149,7 @@ def buildDiscriminator():
 	model.compile(loss='binary_crossentropy', optimizer=opt, loss_weights=[0.5])
 	return model
 
-def buildGan():
-	g_model = buildGenerator()
-	d_model = buildDiscriminator()
+def buildGan(g_model, d_model):
 	image_shape =  (64,64,1)
 	# make weights in the discriminator not trainable
 	d_model.trainable = False
@@ -160,5 +166,28 @@ def buildGan():
 	model.compile(loss=['binary_crossentropy', 'mae'], optimizer=opt, loss_weights=[1,100])
 	return model
 
-#gan = buildGan()
-#print(gan.summary())
+def train(d_model, g_model, gan_model, dataset, n_epochs=100, n_batch=1, n_patch=8):
+	# calculate the number of batches per training epoch
+	bat_per_epo = int(len(dataset) / n_batch)
+	# calculate the number of training iterations
+	n_steps = bat_per_epo * n_epochs
+	# manually enumerate epochs
+	for i in range(n_steps):
+		# select a batch of real samples
+		[X_realA, X_realB], y_real = generate_real_samples(dataset, n_batch, n_patch)
+		# generate a batch of fake samples
+		X_fakeB, y_fake = generate_fake_samples(g_model, X_realA, n_patch)
+		# update discriminator for real samples
+		X_realA = [xr.reshape((64,64,1)) for xr in X_realA]
+		X_realB = [xr.reshape((64,64,1)) for xr in X_realB]
+		d_loss1 = d_model.train_on_batch([X_realA, X_realB], np.ones((len(X_realA),8,8,1)))
+		# update discriminator for generated samples
+		d_loss2 = d_model.train_on_batch([X_realA, X_fakeB], y_fake)
+		# update the generator
+		#X_realA = np.array([xr.reshape((64,64,1)) for xr in X_realA])
+		#X_realB = np.array([xr.reshape((64,64,1)) for xr in X_realB])
+		X_realA = np.array(X_realA)
+		X_realB = np.array(X_realB)
+		g_loss, _, _ = gan_model.train_on_batch(X_realA, [y_real, X_realB])
+		# summarize performance
+		print('>%d, d1[%.3f] d2[%.3f] g[%.3f]' % (i+1, d_loss1, d_loss2, g_loss))
