@@ -7,6 +7,8 @@ import numpy as np
 from keras.backend import tf as ktf
 import random
 from keras.optimizers import Adam
+import os
+import re
 from keras.layers.merge import concatenate
 
 def read_pgm(filename, byteorder='>'):
@@ -40,6 +42,24 @@ def load_dataset():
 	for file in files:
 		dataset.append(read_pgm('lfwcrop_grey/faces/' + file)/255)
 	return dataset
+
+def generate_real_samples(dataset, n, patch_shape):
+	indices = [0]*n
+	for i in range(0, n):
+		r = random.randint(0, len(dataset)-1)
+		while (r in indices):
+			r = random.randint(0, len(dataset)-1)
+		indices[i] = r
+	X = []
+	for index in indices:
+		X.append(dataset[index])
+	y = np.ones((n, patch_shape, patch_shape, 1))
+	return (X, y)
+
+def generate_fake_samples(g_model, samples, patch_shape):
+	X = g_model.predict(samples)
+	y = np.zeros((len(X), patch_shape, patch_shape, 1))
+	return (X, y)
 
 def average_face(dataset):
 	average = np.zeros((64, 64))
@@ -140,5 +160,5 @@ def buildGan():
 	model.compile(loss=['binary_crossentropy', 'mae'], optimizer=opt, loss_weights=[1,100])
 	return model
 
-gan = buildGan()
-print(gan.summary())
+#gan = buildGan()
+#print(gan.summary())
