@@ -87,14 +87,14 @@ def average_face(dataset):
 			average = (average + face/count)*(count/(count+1))
 	return average
 
-#PLACEHOLDER! Actual loss is a function of the discriminator and generator
-#This simply calculates distance from the average face of the dataset
-def avg_loss(truth, x):
-	avg = average_face(load_dataset)
-	error = 0
-	for i in range(0, 64):
-		for j in range(0, 64):
-			error += (avg[i][j]/255 - x[i][j]/255)**2
+#Calculates the distance between two images
+def img_loss(X, Y):
+	assert(X.shape == Y.shape)
+	difference = 0
+	for i in range(0, len(X)):
+		for j in range(0, len(X)):
+			difference += (X[i][j]/255 - Y[i][j]/255)**2
+	return difference/(len(X)*len(X[0]))
 
 def buildGenerator():
 	inputs = Input((64, 64, 1))
@@ -243,21 +243,25 @@ def train_verificator(v_model, dataset, names):
 			count += 1
 	print("positives: %f" %(count/len(train_y)))
 
-	train_x_A = [x.reshape((64,64,1)) for x in train_x_A[:50000]]
-	train_x_B = [x.reshape((64,64,1)) for x in train_x_B[:50000]]
-	train_y = train_y[:50000]
+	train_x_A = [x.reshape((64,64,1)) for x in train_x_A[:500000]]
+	train_x_B = [x.reshape((64,64,1)) for x in train_x_B[:500000]]
+	train_y = train_y[:500000]
 	#Train
-	batch_size = len(train_y)//50
-	for b in range(0, 50):
+	'''
+	batch_size = len(train_y)//500
+	final_loss = 0
+	for b in range(0, 500):
 		print(b)
-		v_model.train_on_batch([train_x_A[b*batch_size:(b+1)*batch_size], train_x_B[b*batch_size:(b+1)*batch_size]], train_y[b*batch_size:(b+1)*batch_size])
+		final_loss = v_model.train_on_batch([train_x_A[b*batch_size:(b+1)*batch_size], train_x_B[b*batch_size:(b+1)*batch_size]], train_y[b*batch_size:(b+1)*batch_size])
+	return final_loss
 
-def train_gan(d_model, g_model, gan_model, dataset, n_epochs=10, n_batch=1, n_patch=8):
+def train_gan(d_model, g_model, gan_model, dataset, n_epochs=1, n_batch=10, n_patch=8):
 	# calculate the number of batches per training epoch
 	bat_per_epo = int(len(dataset) / n_batch)
 	# calculate the number of training iterations
 	n_steps = bat_per_epo * n_epochs
 	# manually enumerate epochs
+	g_loss = 0
 	for i in range(n_steps):
 		if (i%(n_steps//10) == 0):
 			print(i/n_steps)
@@ -277,9 +281,27 @@ def train_gan(d_model, g_model, gan_model, dataset, n_epochs=10, n_batch=1, n_pa
 		X_realA = np.array(X_realA)
 		X_realB = np.array(X_realB)
 		g_loss, _, _ = gan_model.train_on_batch(X_realA, [y_real, X_realB])
-		# summarize performance
-		#print('>%d, d1[%.3f] d2[%.3f] g[%.3f]' % (i+1, d_loss1, d_loss2, g_loss))
+	return g_loss
 
-def train_all(v_model, d_model, g_model, gan_model, dataset, names):
-	train_verificator(v_model, dataset, names)
-	train_gan(d_model, g_model, gan_model, dataset)
+def train_all():
+	#Hyperparameters
+	lambda1 = 0.5
+	lambda2 = 0.5
+
+	dataset, names = load_dataset()
+	v_model = buildVerificator()
+	d_model = buildDiscriminator()
+	g_model = buildGenerator()
+	gan = buildGan(g_model, d_model)
+	verif_loss = train_verificator(v_model, dataset, names)
+	gan_loss = train_gan(d_model, g_model, gan, dataset)
+	change_loss = 0
+	for i in range(0, 1000):
+		rand_index = random.randint(0, len(dataset)-1)
+		deid = g_model.predict(dataset[rand_index])
+		change_loss += img_loss(dataset[rand_index], deid)
+	change_loss/=1000
+	print("cGAN error: %f" %(gan_loss))
+	print("Verification error: %f" %(verif_loss))
+	print("Overall loss: %f" %(gan_loss + lambda1*change_loss + lambda2*verif_loss))
+	return v_model, d_model, g_model, gan
