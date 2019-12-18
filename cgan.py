@@ -247,7 +247,6 @@ def train_verificator(v_model, dataset, names):
 	train_x_B = [x.reshape((64,64,1)) for x in train_x_B[:500000]]
 	train_y = train_y[:500000]
 	#Train
-	'''
 	batch_size = len(train_y)//500
 	final_loss = 0
 	for b in range(0, 500):
